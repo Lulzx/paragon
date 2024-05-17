@@ -85,6 +85,8 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 Special thanks to the developers of Bend and HVM2 for creating the underlying technologies that power this project.
 
+This project started [here X](https://twitter.com/Wooltard/status/1791558096420032959)
+
 ---
 
 We hope this project empowers you to harness the full potential of decentralized, parallel AI model training. Happy coding!
