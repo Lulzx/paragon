@@ -219,3 +219,195 @@ def huber_loss(predictions: Tensor, targets: Tensor, delta: f24) -> f24:
     return total / count
   else:
     return 0.0
+
+# ============================================================
+# Categorical Cross-Entropy Loss (for multi-class classification)
+# ============================================================
+
+# Cross-entropy element: -target * log(prediction)
+# Used with softmax output where predictions sum to 1
+def cross_entropy_element(pred: f24, target: f24) -> f24:
+  # Only contributes if target is 1 (one-hot encoding)
+  return -target * safe_log(pred)
+
+# Apply cross-entropy to tree (for one-hot encoded targets)
+def tree_cross_entropy(pred: Tensor, target: Tensor) -> Tensor:
+  match pred:
+    case Tensor/Node:
+      match target:
+        case Tensor/Node:
+          return Tensor/Node {
+            left: tree_cross_entropy(pred.left, target.left),
+            right: tree_cross_entropy(pred.right, target.right)
+          }
+        case _:
+          return Tensor/Nil
+    case Tensor/Leaf:
+      match target:
+        case Tensor/Leaf:
+          return Tensor/Leaf { val: cross_entropy_element(pred.val, target.val) }
+        case _:
+          return Tensor/Nil
+    case Tensor/Nil:
+      return Tensor/Nil
+
+# Categorical cross-entropy loss
+# L = -sum(target * log(pred))
+def cross_entropy_loss(predictions: Tensor, targets: Tensor) -> f24:
+  ce_values = tree_cross_entropy(predictions, targets)
+  return tree_sum_local(ce_values)
+
+# Cross-entropy gradient with softmax: (prediction - target)
+# This is the combined gradient of softmax + cross-entropy
+# Much simpler and more numerically stable than separate gradients
+def cross_entropy_gradient(predictions: Tensor, targets: Tensor) -> Tensor:
+  return tree_diff_simple(predictions, targets)
+
+# Simple difference: pred - target
+def tree_diff_simple(pred: Tensor, target: Tensor) -> Tensor:
+  match pred:
+    case Tensor/Node:
+      match target:
+        case Tensor/Node:
+          return Tensor/Node {
+            left: tree_diff_simple(pred.left, target.left),
+            right: tree_diff_simple(pred.right, target.right)
+          }
+        case _:
+          return Tensor/Nil
+    case Tensor/Leaf:
+      match target:
+        case Tensor/Leaf:
+          return Tensor/Leaf { val: pred.val - target.val }
+        case _:
+          return Tensor/Nil
+    case Tensor/Nil:
+      return Tensor/Nil
+
+# ============================================================
+# Sparse Cross-Entropy (for integer class labels)
+# ============================================================
+
+# Get the predicted probability for a specific class index
+# This is useful when targets are integer class labels rather than one-hot
+def get_class_prob(predictions: Tensor, class_idx: u24) -> f24:
+  return tree_get_at_index(predictions, class_idx, 0)
+
+# Helper to get value at index in tree
+def tree_get_at_index(t: Tensor, target_idx: u24, current_idx: u24) -> f24:
+  match t:
+    case Tensor/Node:
+      # In a balanced tree, left subtree has lower indices
+      left_result = tree_get_at_index(t.left, target_idx, current_idx)
+      if left_result > -999998.0:
+        return left_result
+      else:
+        # Count elements in left subtree and continue to right
+        left_count = tree_count(t.left)
+        return tree_get_at_index(t.right, target_idx, current_idx + left_count)
+    case Tensor/Leaf:
+      if current_idx == target_idx:
+        return t.val
+      else:
+        return -999999.0  # Sentinel for not found
+    case Tensor/Nil:
+      return -999999.0
+
+# Sparse cross-entropy loss (target is class index, not one-hot)
+def sparse_cross_entropy_loss(predictions: Tensor, class_idx: u24) -> f24:
+  prob = get_class_prob(predictions, class_idx)
+  return -safe_log(prob)
+
+# ============================================================
+# Label Smoothing Cross-Entropy
+# ============================================================
+
+# Apply label smoothing to one-hot targets
+# smoothed = (1 - epsilon) * one_hot + epsilon / num_classes
+def smooth_labels(targets: Tensor, epsilon: f24, num_classes: u24) -> Tensor:
+  smooth_val = epsilon / num_classes
+  scale = 1.0 - epsilon
+  return tree_smooth_labels(targets, scale, smooth_val)
+
+def tree_smooth_labels(t: Tensor, scale: f24, smooth_val: f24) -> Tensor:
+  match t:
+    case Tensor/Node:
+      return Tensor/Node {
+        left: tree_smooth_labels(t.left, scale, smooth_val),
+        right: tree_smooth_labels(t.right, scale, smooth_val)
+      }
+    case Tensor/Leaf:
+      return Tensor/Leaf { val: t.val * scale + smooth_val }
+    case Tensor/Nil:
+      return Tensor/Nil
+
+# Label smoothing cross-entropy loss
+def label_smoothing_loss(predictions: Tensor, targets: Tensor, epsilon: f24, num_classes: u24) -> f24:
+  smoothed = smooth_labels(targets, epsilon, num_classes)
+  return cross_entropy_loss(predictions, smoothed)
+
+# ============================================================
+# Focal Loss (for imbalanced classification)
+# ============================================================
+
+# Focal loss element: -(1-p)^gamma * target * log(p)
+# Down-weights easy examples, focuses on hard examples
+def focal_element(pred: f24, target: f24, gamma: f24) -> f24:
+  if target > 0.5:  # This is the positive class
+    # -(1-p)^gamma * log(p)
+    pt = pred
+    weight = pow_approx(1.0 - pt, gamma)
+    return -weight * safe_log(pt)
+  else:
+    # -(p)^gamma * log(1-p) for negative class
+    pt = 1.0 - pred
+    weight = pow_approx(pred, gamma)
+    return -weight * safe_log(pt)
+
+# Power approximation using exp and log
+def pow_approx(base: f24, exp: f24) -> f24:
+  if base < 0.0001:
+    return 0.0
+  else:
+    # x^y = exp(y * log(x))
+    log_base = safe_log(base)
+    return exp_approx_loss(exp * log_base)
+
+# Exponential approximation for loss calculations
+def exp_approx_loss(x: f24) -> f24:
+  if x > 10.0:
+    return 22026.0
+  else:
+    if x < -10.0:
+      return 0.00005
+    else:
+      x2 = x * x
+      x3 = x2 * x
+      x4 = x3 * x
+      return 1.0 + x + x2 * 0.5 + x3 * 0.166667 + x4 * 0.041667
+
+# Apply focal loss to tree
+def tree_focal(pred: Tensor, target: Tensor, gamma: f24) -> Tensor:
+  match pred:
+    case Tensor/Node:
+      match target:
+        case Tensor/Node:
+          return Tensor/Node {
+            left: tree_focal(pred.left, target.left, gamma),
+            right: tree_focal(pred.right, target.right, gamma)
+          }
+        case _:
+          return Tensor/Nil
+    case Tensor/Leaf:
+      match target:
+        case Tensor/Leaf:
+          return Tensor/Leaf { val: focal_element(pred.val, target.val, gamma) }
+        case _:
+          return Tensor/Nil
+    case Tensor/Nil:
+      return Tensor/Nil
+
+# Focal loss (for class imbalance)
+def focal_loss(predictions: Tensor, targets: Tensor, gamma: f24) -> f24:
+  focal_values = tree_focal(predictions, targets, gamma)
+  return tree_sum_local(focal_values)

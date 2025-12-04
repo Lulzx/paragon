@@ -83,13 +83,18 @@ The compiled flag (`-c`) generates a standalone C file that can be independently
 paragon/
 ├── src/                        # Core library modules (Bend)
 │   ├── matrix.bend             # Matrix operations (parallel)
-│   ├── activation.bend         # Activation functions
+│   ├── activation.bend         # Activation functions (ReLU, Sigmoid, Softmax, etc.)
 │   ├── layer.bend              # Neural network layers
-│   ├── loss.bend               # Loss functions
-│   └── network.bend            # Network composition
+│   ├── loss.bend               # Loss functions (MSE, Cross-Entropy, Focal, etc.)
+│   ├── network.bend            # Network composition
+│   ├── optimizer.bend          # Optimizers (SGD, Adam, RMSprop, AdaGrad)
+│   ├── regularization.bend     # Regularization (Dropout, L1/L2, BatchNorm)
+│   ├── training.bend           # Training utilities (batching, LR scheduling)
+│   └── mnist.bend              # MNIST dataset loader and utilities
 ├── examples/                   # Example applications
 │   ├── training_example.hvm    # XOR training (HVM3 native)
 │   ├── training_example.bend   # XOR training (Bend)
+│   ├── mnist_training.bend     # MNIST digit classification
 │   ├── backprop.hvm            # Parallel backpropagation
 │   ├── bench_fibonacci.hvm     # Fibonacci benchmark
 │   ├── bench_parallel_sum.hvm  # Tree reduction benchmark
@@ -104,6 +109,66 @@ paragon/
 ├── BENCHMARKS.md               # Performance benchmarks
 └── README.md
 ```
+
+## Training Features
+
+### Activation Functions
+- **ReLU** - Standard rectified linear unit
+- **LeakyReLU** - ReLU with small negative slope
+- **Sigmoid** - Piecewise linear approximation
+- **Tanh** - Hyperbolic tangent approximation
+- **Softmax** - Numerically stable softmax for classification
+
+### Loss Functions
+- **MSE** - Mean Squared Error for regression
+- **Cross-Entropy** - Categorical cross-entropy for classification
+- **Binary Cross-Entropy** - For binary classification
+- **Huber Loss** - Smooth L1 for robust regression
+- **Focal Loss** - For imbalanced classification
+- **Label Smoothing** - Cross-entropy with smoothed labels
+
+### Optimizers
+- **SGD** - Vanilla stochastic gradient descent
+- **SGD with Momentum** - Accelerated gradient descent
+- **Nesterov Momentum** - Look-ahead momentum
+- **Adam** - Adaptive moment estimation
+- **AdamW** - Adam with decoupled weight decay
+- **RMSprop** - Root mean square propagation
+- **AdaGrad** - Adaptive gradient
+
+### Regularization
+- **Dropout** - Inverted dropout with configurable keep probability
+- **L1 Regularization** - Lasso penalty for sparsity
+- **L2 Regularization** - Ridge/weight decay penalty
+- **Elastic Net** - Combined L1 + L2
+- **Batch Normalization** - Normalize activations
+- **Layer Normalization** - Per-sample normalization
+- **Weight Normalization** - Reparameterized weights
+- **Gradient Clipping** - By value or by norm
+
+### Learning Rate Scheduling
+- **Constant** - Fixed learning rate
+- **Step Decay** - Reduce LR by factor every N steps
+- **Exponential Decay** - Continuous exponential decay
+- **Cosine Annealing** - Cosine decay with warm restarts
+- **Warmup + Cosine** - Linear warmup then cosine decay
+- **Reduce on Plateau** - Reduce when loss stops improving
+- **Linear** - Linear interpolation between start/end LR
+
+### Training Utilities
+- **Batch Processing** - Create and iterate over batches
+- **Data Shuffling** - Fisher-Yates shuffle with LCG
+- **One-Hot Encoding** - Convert class indices to vectors
+- **Early Stopping** - Stop when validation loss plateaus
+- **Training History** - Track losses and accuracies
+- **Confusion Matrix** - Multi-class evaluation
+
+### MNIST Support
+- **Data Loading** - Load and preprocess MNIST images
+- **Normalization** - Min-max or standardization
+- **Batching** - Create training batches
+- **Accuracy** - Compute classification accuracy
+- **Test Data** - Synthetic MNIST-like data for testing
 
 ### Building from Source
 

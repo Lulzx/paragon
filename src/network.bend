@@ -22,6 +22,7 @@ type Activation:
   Tanh
   LeakyReLU
   Linear
+  Softmax
 
 # Layer with activation
 type Layer:
@@ -95,6 +96,74 @@ def apply_activation(t: Tensor, act: Activation) -> Tensor:
       return tree_leaky_relu_net(t)
     case Activation/Linear:
       return t
+    case Activation/Softmax:
+      return tree_softmax_net(t)
+
+# Softmax on tree (numerically stable)
+def tree_softmax_net(t: Tensor) -> Tensor:
+  max_val = tree_max_net(t)
+  exp_shifted = tree_exp_shifted_net(t, max_val)
+  sum_exp = tree_sum_net(exp_shifted)
+  return tree_divide_net(exp_shifted, sum_exp)
+
+# Find max value in tree
+def tree_max_net(t: Tensor) -> f24:
+  fold t:
+    case Tensor/Node:
+      left_max = t.left
+      right_max = t.right
+      if left_max > right_max:
+        return left_max
+      else:
+        return right_max
+    case Tensor/Leaf:
+      return t.val
+    case Tensor/Nil:
+      return -999999.0
+
+# Exponential approximation
+def exp_approx_net(x: f24) -> f24:
+  if x > 10.0:
+    return 22026.0
+  else:
+    if x < -10.0:
+      return 0.00005
+    else:
+      x2 = x * x
+      x3 = x2 * x
+      x4 = x3 * x
+      x5 = x4 * x
+      return 1.0 + x + x2 * 0.5 + x3 * 0.166667 + x4 * 0.041667 + x5 * 0.008333
+
+# Compute exp(x - max) for each element
+def tree_exp_shifted_net(t: Tensor, max_val: f24) -> Tensor:
+  match t:
+    case Tensor/Node:
+      return Tensor/Node {
+        left: tree_exp_shifted_net(t.left, max_val),
+        right: tree_exp_shifted_net(t.right, max_val)
+      }
+    case Tensor/Leaf:
+      x = t.val - max_val
+      return Tensor/Leaf { val: exp_approx_net(x) }
+    case Tensor/Nil:
+      return Tensor/Nil
+
+# Divide each element by divisor
+def tree_divide_net(t: Tensor, divisor: f24) -> Tensor:
+  match t:
+    case Tensor/Node:
+      return Tensor/Node {
+        left: tree_divide_net(t.left, divisor),
+        right: tree_divide_net(t.right, divisor)
+      }
+    case Tensor/Leaf:
+      if divisor > 0.0001:
+        return Tensor/Leaf { val: t.val / divisor }
+      else:
+        return Tensor/Leaf { val: 0.0 }
+    case Tensor/Nil:
+      return Tensor/Nil
 
 # ReLU on tree
 def tree_relu_net(t: Tensor) -> Tensor:
