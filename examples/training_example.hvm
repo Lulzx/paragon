@@ -1,0 +1,239 @@
+// Paragon Training Example for HVM3
+// Demonstrates massively parallel neural network training
+// This example trains a simple network to learn the XOR function
+// Uses scaled integers (x1000) instead of floats for HVM3 compatibility
+
+// ============================================================
+// Data Type Definitions
+// ============================================================
+
+// Tensor structure for parallel data representation
+data Tensor {
+  #TNode{left right}
+  #TLeaf{val}
+  #TNil
+}
+
+// Simple dense layer
+data Layer {
+  #Dense{weights biases}
+}
+
+// Training sample
+data Sample {
+  #Data{input target}
+}
+
+// Sample list
+data SampleList {
+  #SNil
+  #SCons{head tail}
+}
+
+// ============================================================
+// Tensor Utilities (Parallel Operations)
+// ============================================================
+
+// Sum all values in tensor (parallel reduction)
+@tensor_sum(t) = ~t {
+  #TNode{left right}: (+ @tensor_sum(left) @tensor_sum(right))
+  #TLeaf{val}: val
+  #TNil: 0
+}
+
+// Add two tensors element-wise (parallel)
+@tensor_add_node(left right b) = ~b !left !right {
+  #TNode{l2 r2}: #TNode{@tensor_add(left l2) @tensor_add(right r2)}
+  #TLeaf{v}: #TNode{left right}
+  #TNil: #TNode{left right}
+}
+
+@tensor_add_leaf(val b) = ~b !val {
+  #TNode{l2 r2}: #TLeaf{val}
+  #TLeaf{v2}: #TLeaf{(+ val v2)}
+  #TNil: #TLeaf{val}
+}
+
+@tensor_add(a b) = ~a !b {
+  #TNode{left right}: @tensor_add_node(left right b)
+  #TLeaf{val}: @tensor_add_leaf(val b)
+  #TNil: b
+}
+
+// Multiply two tensors element-wise (parallel) - scaled by 1000
+@tensor_mul_node(left right b) = ~b !left !right {
+  #TNode{l2 r2}: #TNode{@tensor_mul(left l2) @tensor_mul(right r2)}
+  #TLeaf{v}: #TNil
+  #TNil: #TNil
+}
+
+@tensor_mul_leaf(val b) = ~b !val {
+  #TNode{l2 r2}: #TNil
+  #TLeaf{v2}: #TLeaf{(/ (* val v2) 1000)}
+  #TNil: #TNil
+}
+
+@tensor_mul(a b) = ~a !b {
+  #TNode{left right}: @tensor_mul_node(left right b)
+  #TLeaf{val}: @tensor_mul_leaf(val b)
+  #TNil: #TNil
+}
+
+// ============================================================
+// Activation Functions
+// ============================================================
+
+// ReLU activation: max(0, x)
+@relu(x) = !&0{x0 x1}=x ~(> x0 0) !x1 {
+  0: 0
+  1: x1
+}
+
+// Apply ReLU to tensor (parallel)
+@tensor_relu(t) = ~t {
+  #TNode{left right}: #TNode{@tensor_relu(left) @tensor_relu(right)}
+  #TLeaf{val}: #TLeaf{@relu(val)}
+  #TNil: #TNil
+}
+
+// ============================================================
+// Neural Network Forward Pass
+// ============================================================
+
+// Forward pass through layer
+@layer_forward(layer input) = ~layer !input {
+  #Dense{weights biases}:
+    !weighted = @tensor_mul(weights input)
+    !result = @tensor_add(weighted biases)
+    @tensor_relu(result)
+}
+
+// Two-layer network forward pass
+@network_forward(hidden output input) =
+  !hidden_out = @layer_forward(hidden input)
+  @layer_forward(output hidden_out)
+
+// ============================================================
+// Loss Functions
+// ============================================================
+
+// Squared difference (for MSE)
+@squared_diff(a b) =
+  !diff = (- a b)
+  !&0{d0 d1}=diff
+  (/ (* d0 d1) 1000)
+
+// Tensor squared difference
+@tensor_sqdiff_node(left right target) = ~target !left !right {
+  #TNode{l2 r2}: #TNode{@tensor_squared_diff(left l2) @tensor_squared_diff(right r2)}
+  #TLeaf{v}: #TNil
+  #TNil: #TNil
+}
+
+@tensor_sqdiff_leaf(val target) = ~target !val {
+  #TNode{l2 r2}: #TNil
+  #TLeaf{v2}: #TLeaf{@squared_diff(val v2)}
+  #TNil: #TNil
+}
+
+@tensor_squared_diff(pred target) = ~pred !target {
+  #TNode{left right}: @tensor_sqdiff_node(left right target)
+  #TLeaf{val}: @tensor_sqdiff_leaf(val target)
+  #TNil: #TNil
+}
+
+// Mean Squared Error loss
+@mse_loss(pred target) =
+  !squared = @tensor_squared_diff(pred target)
+  @tensor_sum(squared)
+
+// ============================================================
+// Training Data (XOR Problem)
+// Inputs and targets scaled by 1000 (0 -> 0, 1 -> 1000)
+// ============================================================
+
+// Create XOR dataset samples
+@sample1 = #Data{
+  #TNode{#TLeaf{0} #TLeaf{0}}
+  #TLeaf{0}
+}
+
+@sample2 = #Data{
+  #TNode{#TLeaf{0} #TLeaf{1000}}
+  #TLeaf{1000}
+}
+
+@sample3 = #Data{
+  #TNode{#TLeaf{1000} #TLeaf{0}}
+  #TLeaf{1000}
+}
+
+@sample4 = #Data{
+  #TNode{#TLeaf{1000} #TLeaf{1000}}
+  #TLeaf{0}
+}
+
+@xor_dataset = #SCons{@sample1 #SCons{@sample2 #SCons{@sample3 #SCons{@sample4 #SNil}}}}
+
+// ============================================================
+// Weight Initialization
+// Weights scaled by 1000 (0.1 -> 100, 0.2 -> 200, etc.)
+// ============================================================
+
+// Create simple weights (small values for stability)
+@init_weights = #TNode{
+  #TNode{#TLeaf{100} #TLeaf{200}}
+  #TNode{#TLeaf{150} #TLeaf{100}}
+}
+
+@init_biases = #TNode{#TLeaf{0} #TLeaf{0}}
+
+@hidden_layer = #Dense{@init_weights @init_biases}
+@output_layer = #Dense{#TNode{#TLeaf{100} #TLeaf{100}} #TLeaf{0}}
+
+// ============================================================
+// Training Loop
+// ============================================================
+
+// Compute loss for a single sample
+@sample_loss(hidden output sample) = ~sample !hidden !output {
+  #Data{input target}:
+    !pred = @network_forward(hidden output input)
+    @mse_loss(pred target)
+}
+
+// Compute total loss over dataset (parallel over samples)
+@dataset_loss(hidden output samples) = ~samples !hidden !output {
+  #SNil: 0
+  #SCons{head tail}:
+    !&0{h0 h1}=hidden
+    !&0{o0 o1}=output
+    !loss = @sample_loss(h0 o0 head)
+    (+ loss @dataset_loss(h1 o1 tail))
+}
+
+// Training step
+@train_step(hidden output dataset) =
+  @dataset_loss(hidden output dataset)
+
+// Run multiple training epochs
+@train(!epochs hidden output dataset) = ~epochs !hidden !output !dataset {
+  0: @train_step(hidden output dataset)
+  1+p:
+    !&0{h0 h1}=hidden
+    !&0{o0 o1}=output
+    !&0{d0 d1}=dataset
+    !_loss = @train_step(h0 o0 d0)
+    @train(p h1 o1 d1)
+}
+
+// ============================================================
+// Main Entry Point
+// ============================================================
+
+@main =
+  !hidden = @hidden_layer
+  !output = @output_layer
+  !dataset = @xor_dataset
+  !epochs = 10
+  @train(epochs hidden output dataset)
