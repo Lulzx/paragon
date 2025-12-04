@@ -162,6 +162,49 @@ Key features:
 - **Forward pass caching** - Stores activations for backward pass
 - **Parallel weight updates** - SGD with momentum
 
+## Performance Benchmarks
+
+### CPU vs GPU Comparison (Apple M4 Pro)
+
+| Benchmark | HVM3 CPU (MIPS) | Metal GPU (MIPS) | GPU Speedup |
+|-----------|-----------------|------------------|-------------|
+| Tensor Add (1K) | 153 | 5 | 0.03× |
+| Tensor Add (64K) | 348 | 551 | **1.6×** |
+| Tensor Add (1M) | 589 | 3,547 | **6.0×** |
+| ReLU (64K) | 262 | 554 | **2.1×** |
+| ReLU (1M) | 495 | 3,505 | **7.1×** |
+| Dense (64→64) | 29 | 30 | 1.0× |
+| Dense (256→256) | 89 | 261 | **2.9×** |
+
+### Key Insights
+
+- **Small Data (< 1K)**: CPU wins due to GPU dispatch overhead
+- **Medium Data (64K)**: GPU provides 1.5-2× speedup
+- **Large Data (1M+)**: GPU provides **6-7× speedup**
+- **Dense Layers**: GPU excels at larger matrix sizes
+
+### When to Use GPU vs CPU
+
+| Scenario | Recommended | Reason |
+|----------|-------------|--------|
+| Small tensors (< 10K) | HVM3 CPU | GPU overhead dominates |
+| Medium tensors (10K-100K) | Either | Similar performance |
+| Large tensors (> 100K) | Metal GPU | 6-7× faster |
+| Neural network training | Metal GPU | Large matrix operations |
+| Interactive/real-time | HVM3 CPU | Lower latency |
+
+### Running Benchmarks
+
+```bash
+# CPU benchmarks (HVM3)
+hvm run examples/bench_comparison.hvm -c -s
+
+# GPU benchmarks (Metal)
+swift metal/benchmark.swift
+```
+
+See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance analysis.
+
 ## Documentation
 
 For detailed documentation on HVM3 and the Bend language, refer to:
