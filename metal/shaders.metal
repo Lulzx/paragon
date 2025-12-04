@@ -5,6 +5,8 @@
 #include <metal_stdlib>
 using namespace metal;
 
+#define UINT32_MAX 0xFFFFFFFF
+
 // ============================================================
 // Constants and Configuration
 // ============================================================

@@ -131,18 +131,51 @@ The Metal backend implements the following GPU kernels:
 | `mse_loss` | Loss computation | Parallel reduction |
 | `bitonic_sort_step` | Parallel sorting | Compare-swap network |
 
-### Expected GPU Performance
+### Measured GPU Performance (Apple M4 Pro)
 
-Based on Apple Silicon GPU specifications:
+Actual benchmark results on Apple M4 Pro:
 
-| Device | GPU Cores | Memory Bandwidth | Est. Performance |
-|--------|-----------|------------------|------------------|
-| M1 | 8 | 68 GB/s | ~5,000 MIPS |
-| M1 Pro | 16 | 200 GB/s | ~15,000 MIPS |
-| M1 Max | 32 | 400 GB/s | ~30,000 MIPS |
-| M2 | 10 | 100 GB/s | ~8,000 MIPS |
-| M3 Max | 40 | 400 GB/s | ~40,000 MIPS |
-| M4 Max | 40 | 546 GB/s | ~50,000 MIPS |
+| Benchmark | Operations | Time (s) | Performance (MIPS) |
+|-----------|------------|----------|-------------------|
+| Tensor Add (1K) | 1,024 | 0.000184 | **5** |
+| Tensor Add (64K) | 65,536 | 0.000119 | **551** |
+| Tensor Add (1M) | 1,048,576 | 0.000296 | **3,547** |
+| ReLU (1K) | 1,024 | 0.000126 | **8** |
+| ReLU (64K) | 65,536 | 0.000118 | **554** |
+| ReLU (1M) | 1,048,576 | 0.000299 | **3,505** |
+| Dense (64→64) | 4,160 | 0.000135 | **30** |
+| Dense (256→256) | 65,792 | 0.000252 | **261** |
+| Dense (1024→512) | 524,800 | 0.000666 | **788** |
+
+**Summary:**
+- **Peak Performance**: 3,547 MIPS (Tensor Add 1M)
+- **Average Performance**: 1,028 MIPS
+- **Device**: Apple M4 Pro (Unified Memory: true)
+
+### GPU vs CPU Comparison
+
+| Operation | HVM3 CPU (Compiled) | Metal GPU | GPU Speedup |
+|-----------|---------------------|-----------|-------------|
+| Tensor Add (1M) | 752 MIPS | 3,547 MIPS | **4.7×** |
+| Element-wise ops (64K) | ~500 MIPS | 551 MIPS | **1.1×** |
+| Dense Layer (1024→512) | ~47 MIPS | 788 MIPS | **16.8×** |
+
+### Performance Scaling
+
+Performance scales with data size due to GPU parallelization overhead:
+
+| Data Size | Performance | Notes |
+|-----------|-------------|-------|
+| 1K elements | 5-30 MIPS | Overhead dominates |
+| 64K elements | 250-550 MIPS | Good utilization |
+| 1M elements | 3,500+ MIPS | Peak performance |
+
+### Running Metal Benchmarks
+
+```bash
+# Run Metal benchmark suite
+swift metal/benchmark.swift
+```
 
 ### Building and Testing Metal Backend
 
