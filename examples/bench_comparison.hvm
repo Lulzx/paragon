@@ -1,0 +1,178 @@
+// CPU Benchmark for Comparison with Metal GPU
+// Tests same operations as metal/benchmark.swift
+
+// ============================================================
+// Data Types
+// ============================================================
+
+data Tree {
+  #Node{left right}
+  #Leaf{val}
+  #Nil
+}
+
+// ============================================================
+// Tree Generation
+// ============================================================
+
+// Generate tree of given depth (2^depth leaves)
+@gen_tree(!depth val) = ~depth !val {
+  0: #Leaf{val}
+  1+p:
+    !&0{v0 v1}=val
+    !&0{p0 p1}=p
+    #Node{@gen_tree(p0 v0) @gen_tree(p1 (+ v1 1))}
+}
+
+// ============================================================
+// Tensor Add (Element-wise)
+// ============================================================
+
+@tensor_add(a b) = ~a !b {
+  #Node{al ar}: ~b !al !ar {
+    #Node{bl br}: #Node{@tensor_add(al bl) @tensor_add(ar br)}
+    #Leaf{v}: #Node{al ar}
+    #Nil: #Node{al ar}
+  }
+  #Leaf{av}: ~b !av {
+    #Leaf{bv}: #Leaf{(+ av bv)}
+    #Node{l r}: #Leaf{av}
+    #Nil: #Leaf{av}
+  }
+  #Nil: b
+}
+
+// ============================================================
+// ReLU Activation
+// ============================================================
+
+@relu(x) = !&0{x0 x1}=x ~(> x0 0) !x1 {
+  0: 0
+  1: x1
+}
+
+@tensor_relu(t) = ~t {
+  #Node{left right}: #Node{@tensor_relu(left) @tensor_relu(right)}
+  #Leaf{val}: #Leaf{@relu(val)}
+  #Nil: #Nil
+}
+
+// ============================================================
+// Tree Sum (for verification)
+// ============================================================
+
+@tree_sum(t) = ~t {
+  #Node{left right}: (+ @tree_sum(left) @tree_sum(right))
+  #Leaf{val}: val
+  #Nil: 0
+}
+
+// ============================================================
+// Tensor Multiply (Element-wise, scaled)
+// ============================================================
+
+@tensor_mul(a b) = ~a !b {
+  #Node{al ar}: ~b !al !ar {
+    #Node{bl br}: #Node{@tensor_mul(al bl) @tensor_mul(ar br)}
+    #Leaf{v}: #Nil
+    #Nil: #Nil
+  }
+  #Leaf{av}: ~b !av {
+    #Leaf{bv}: #Leaf{(/ (* av bv) 1000)}
+    #Node{l r}: #Nil
+    #Nil: #Nil
+  }
+  #Nil: #Nil
+}
+
+// ============================================================
+// Dense Layer Forward (Matrix-Vector)
+// ============================================================
+
+// Dot product via tree multiply and sum
+@dot_product(a b) = @tree_sum(@tensor_mul(a b))
+
+// Matrix-vector multiplication
+@matvec(mat vec) = ~mat !vec {
+  #Node{row rest}:
+    !&0{v0 v1}=vec
+    !dot = @dot_product(row v0)
+    #Node{#Leaf{dot} @matvec(rest v1)}
+  #Leaf{val}: #Leaf{val}
+  #Nil: #Nil
+}
+
+// Dense layer: weights @ input + bias, then ReLU
+@dense_forward(weights biases input) =
+  !weighted = @matvec(weights input)
+  !with_bias = @tensor_add(weighted biases)
+  @tensor_relu(with_bias)
+
+// ============================================================
+// Benchmarks
+// ============================================================
+
+// Tensor Add 1K (depth 10 = 1024 elements)
+@bench_add_1k =
+  !a = @gen_tree(10 1)
+  !b = @gen_tree(10 100)
+  @tree_sum(@tensor_add(a b))
+
+// Tensor Add 64K (depth 16 = 65536 elements)
+@bench_add_64k =
+  !a = @gen_tree(16 1)
+  !b = @gen_tree(16 100)
+  @tree_sum(@tensor_add(a b))
+
+// Tensor Add 1M (depth 20 = 1048576 elements)
+@bench_add_1m =
+  !a = @gen_tree(20 1)
+  !b = @gen_tree(20 100)
+  @tree_sum(@tensor_add(a b))
+
+// ReLU 1K
+@bench_relu_1k =
+  !t = @gen_tree(10 500)
+  @tree_sum(@tensor_relu(t))
+
+// ReLU 64K
+@bench_relu_64k =
+  !t = @gen_tree(16 500)
+  @tree_sum(@tensor_relu(t))
+
+// ReLU 1M
+@bench_relu_1m =
+  !t = @gen_tree(20 500)
+  @tree_sum(@tensor_relu(t))
+
+// Dense 64->64 (approximated with tree structure)
+// Using depth 6 = 64 elements for input/output
+@bench_dense_64 =
+  !weights = @gen_tree(6 100)
+  !biases = @gen_tree(6 0)
+  !input = @gen_tree(6 500)
+  @tree_sum(@dense_forward(weights biases input))
+
+// Dense 256->256
+@bench_dense_256 =
+  !weights = @gen_tree(8 100)
+  !biases = @gen_tree(8 0)
+  !input = @gen_tree(8 500)
+  @tree_sum(@dense_forward(weights biases input))
+
+// ============================================================
+// Main - Run selected benchmark
+// ============================================================
+
+// Change this to run different benchmarks:
+// @main = @bench_add_1k
+// @main = @bench_add_64k
+// @main = @bench_add_1m
+// @main = @bench_relu_1k
+// @main = @bench_relu_64k
+// @main = @bench_relu_1m
+// @main = @bench_dense_64
+// @main = @bench_dense_256
+
+// Default: run tensor add 1M for comparison
+@main = @bench_add_1m

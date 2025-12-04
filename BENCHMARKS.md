@@ -152,13 +152,39 @@ Actual benchmark results on Apple M4 Pro:
 - **Average Performance**: 1,028 MIPS
 - **Device**: Apple M4 Pro (Unified Memory: true)
 
-### GPU vs CPU Comparison
+### CPU vs GPU Comparison (Apple M4 Pro)
 
-| Operation | HVM3 CPU (Compiled) | Metal GPU | GPU Speedup |
-|-----------|---------------------|-----------|-------------|
-| Tensor Add (1M) | 752 MIPS | 3,547 MIPS | **4.7×** |
-| Element-wise ops (64K) | ~500 MIPS | 551 MIPS | **1.1×** |
-| Dense Layer (1024→512) | ~47 MIPS | 788 MIPS | **16.8×** |
+Direct comparison of HVM3 CPU (compiled mode) vs Metal GPU on identical operations:
+
+| Benchmark | HVM3 CPU (MIPS) | Metal GPU (MIPS) | GPU Speedup |
+|-----------|-----------------|------------------|-------------|
+| **Tensor Add** | | | |
+| 1K elements | 153 | 5 | 0.03× (overhead) |
+| 64K elements | 348 | 551 | **1.6×** |
+| 1M elements | 589 | 3,547 | **6.0×** |
+| **ReLU Activation** | | | |
+| 64K elements | 262 | 554 | **2.1×** |
+| 1M elements | 495 | 3,505 | **7.1×** |
+| **Dense Layer** | | | |
+| 64→64 | 29 | 30 | 1.0× |
+| 256→256 | 89 | 261 | **2.9×** |
+
+### Key Insights
+
+1. **Small Data (< 1K)**: CPU wins due to GPU dispatch overhead
+2. **Medium Data (64K)**: GPU provides 1.5-2× speedup
+3. **Large Data (1M+)**: GPU provides **6-7× speedup**
+4. **Dense Layers**: GPU excels at larger matrix sizes (2.9× at 256×256)
+
+### When to Use GPU vs CPU
+
+| Scenario | Recommended | Reason |
+|----------|-------------|--------|
+| Small tensors (< 10K) | HVM3 CPU | GPU overhead dominates |
+| Medium tensors (10K-100K) | Either | Similar performance |
+| Large tensors (> 100K) | Metal GPU | **6-7× faster** |
+| Neural network training | Metal GPU | Large matrix operations |
+| Interactive/real-time | HVM3 CPU | Lower latency |
 
 ### Performance Scaling
 
