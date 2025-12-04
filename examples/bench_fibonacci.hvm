@@ -1,0 +1,42 @@
+// Fibonacci Benchmark for HVM3
+// Demonstrates parallel recursive computation
+
+// ============================================================
+// Naive Recursive Fibonacci (exponential, but parallelizable)
+// ============================================================
+
+@fib(!n) = ~n {
+  0: 0
+  1: 1
+  1+p: !&0{p0 p1}=p ~p0 {
+    0: 1
+    1+q: (+ @fib(p1) @fib(q))
+  }
+}
+
+// ============================================================
+// Iterative Fibonacci (linear, sequential)
+// ============================================================
+
+@fib_iter_go(!n a b) = ~n !a !b {
+  0: a
+  1+p: !&0{b0 b1}=b @fib_iter_go(p b0 (+ a b1))
+}
+
+@fib_iter(n) = @fib_iter_go(n 0 1)
+
+// ============================================================
+// Benchmarks
+// ============================================================
+
+// Naive fib(20) - parallelizable
+@bench_fib_20 = @fib(20)
+
+// Naive fib(25) - larger
+@bench_fib_25 = @fib(25)
+
+// Iterative fib(30) - sequential but fast
+@bench_fib_iter_30 = @fib_iter(30)
+
+// Main: run fib(20)
+@main = @bench_fib_20

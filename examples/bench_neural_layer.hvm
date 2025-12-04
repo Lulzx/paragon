@@ -1,0 +1,165 @@
+// Neural Network Layer Benchmark for HVM3
+// Demonstrates parallel forward pass computation
+
+// ============================================================
+// Data Types
+// ============================================================
+
+data Tree {
+  #Node{left right}
+  #Leaf{val}
+  #Nil
+}
+
+data Layer {
+  #Dense{weights biases}
+}
+
+data LayerList {
+  #LNil
+  #LCons{head tail}
+}
+
+// ============================================================
+// Tree Operations
+// ============================================================
+
+@tree_sum(t) = ~t {
+  #Node{left right}: (+ @tree_sum(left) @tree_sum(right))
+  #Leaf{val}: val
+  #Nil: 0
+}
+
+@tree_mul(a b) = ~a !b {
+  #Node{left right}: ~b !left !right {
+    #Node{l2 r2}: #Node{@tree_mul(left l2) @tree_mul(right r2)}
+    #Leaf{v}: #Nil
+    #Nil: #Nil
+  }
+  #Leaf{val}: ~b !val {
+    #Leaf{v2}: #Leaf{(/ (* val v2) 1000)}
+    #Node{l r}: #Nil
+    #Nil: #Nil
+  }
+  #Nil: #Nil
+}
+
+@tree_add(a b) = ~a !b {
+  #Node{left right}: ~b !left !right {
+    #Node{l2 r2}: #Node{@tree_add(left l2) @tree_add(right r2)}
+    #Leaf{v}: #Node{left right}
+    #Nil: #Node{left right}
+  }
+  #Leaf{val}: ~b !val {
+    #Leaf{v2}: #Leaf{(+ val v2)}
+    #Node{l r}: #Leaf{val}
+    #Nil: #Leaf{val}
+  }
+  #Nil: b
+}
+
+// ============================================================
+// Activation Functions
+// ============================================================
+
+@relu(x) = !&0{x0 x1}=x ~(> x0 0) !x1 {
+  0: 0
+  1: x1
+}
+
+@tree_relu(t) = ~t {
+  #Node{left right}: #Node{@tree_relu(left) @tree_relu(right)}
+  #Leaf{val}: #Leaf{@relu(val)}
+  #Nil: #Nil
+}
+
+// ============================================================
+// Layer Forward Pass
+// ============================================================
+
+@layer_forward(layer input) = ~layer !input {
+  #Dense{weights biases}:
+    !weighted = @tree_mul(weights input)
+    !with_bias = @tree_add(weighted biases)
+    @tree_relu(with_bias)
+}
+
+// Multi-layer forward
+@network_forward(layers input) = ~layers !input {
+  #LNil: input
+  #LCons{head tail}:
+    !output = @layer_forward(head input)
+    @network_forward(tail output)
+}
+
+// ============================================================
+// Layer Generation
+// ============================================================
+
+@gen_weights(!depth seed) = ~depth !seed {
+  0: #Leaf{(% (+ (* seed 1103) 12345) 200)}
+  1+p:
+    !&0{s0 s1}=seed
+    !&0{p0 p1}=p
+    !next_seed = (% (+ (* s0 1103) 12345) 10000)
+    !&0{n0 n1}=next_seed
+    #Node{@gen_weights(p0 n0) @gen_weights(p1 (+ n1 1))}
+}
+
+@gen_biases(!depth) = ~depth {
+  0: #Leaf{0}
+  1+p: !&0{p0 p1}=p #Node{@gen_biases(p0) @gen_biases(p1)}
+}
+
+@create_layer(depth seed) =
+  !&0{d0 d1}=depth
+  #Dense{@gen_weights(d0 seed) @gen_biases(d1)}
+
+@create_network(!num_layers depth seed) = ~num_layers !depth !seed {
+  0: #LNil
+  1+p:
+    !&0{d0 d1}=depth
+    !&0{s0 s1}=seed
+    !&0{p0 p1}=p
+    !layer = @create_layer(d0 s0)
+    !next_seed = (+ s1 100)
+    #LCons{layer @create_network(p0 d1 next_seed)}
+}
+
+@gen_input(!depth val) = ~depth !val {
+  0: #Leaf{val}
+  1+p:
+    !&0{v0 v1}=val
+    !&0{p0 p1}=p
+    #Node{@gen_input(p0 v0) @gen_input(p1 (+ v1 100))}
+}
+
+// ============================================================
+// Benchmarks
+// ============================================================
+
+// Single layer (depth 4 = 16 neurons)
+@layer_d4 = @create_layer(4 42)
+@input_d4 = @gen_input(4 100)
+@bench_layer_d4 = @tree_sum(@layer_forward(@layer_d4 @input_d4))
+
+// Single layer (depth 5 = 32 neurons)
+@layer_d5 = @create_layer(5 42)
+@input_d5 = @gen_input(5 100)
+@bench_layer_d5 = @tree_sum(@layer_forward(@layer_d5 @input_d5))
+
+// Single layer (depth 6 = 64 neurons)
+@layer_d6 = @create_layer(6 42)
+@input_d6 = @gen_input(6 100)
+@bench_layer_d6 = @tree_sum(@layer_forward(@layer_d6 @input_d6))
+
+// 3-layer network
+@network_3 = @create_network(3 4 42)
+@bench_net_3 = @tree_sum(@network_forward(@network_3 @input_d4))
+
+// 5-layer network
+@network_5 = @create_network(5 4 42)
+@bench_net_5 = @tree_sum(@network_forward(@network_5 @input_d4))
+
+// Main benchmark
+@main = @bench_layer_d4

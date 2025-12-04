@@ -1,0 +1,185 @@
+// Bitonic Sort Benchmark for HVM3
+// Demonstrates parallel sorting with O(log^2 n) parallel time
+// Bitonic sort is highly parallelizable and suitable for GPU execution
+
+// ============================================================
+// Data Types
+// ============================================================
+
+data List {
+  #Nil
+  #Cons{head tail}
+}
+
+// Direction for sorting
+data Dir {
+  #Asc   // Ascending
+  #Desc  // Descending
+}
+
+// ============================================================
+// Basic List Operations
+// ============================================================
+
+// Get list length
+@length(xs) = ~xs {
+  #Nil: 0
+  #Cons{head tail}: (+ 1 @length(tail))
+}
+
+// Split list into two halves
+@split_half(xs left right) = ~xs !left !right {
+  #Nil: #Cons{left #Cons{right #Nil}}
+  #Cons{h1 t1}: ~t1 !h1 !left !right {
+    #Nil: #Cons{#Cons{h1 left} #Cons{right #Nil}}
+    #Cons{h2 t2}:
+      @split_half(t2 #Cons{h1 left} #Cons{h2 right})
+  }
+}
+
+// Reverse a list
+@reverse_go(xs acc) = ~xs !acc {
+  #Nil: acc
+  #Cons{head tail}: @reverse_go(tail #Cons{head acc})
+}
+
+@reverse(xs) = @reverse_go(xs #Nil)
+
+// Merge two lists element by element
+@merge_pairs(xs ys) = ~xs !ys {
+  #Nil: ys
+  #Cons{hx tx}: ~ys !hx !tx {
+    #Nil: #Cons{hx tx}
+    #Cons{hy ty}: #Cons{hx #Cons{hy @merge_pairs(tx ty)}}
+  }
+}
+
+// ============================================================
+// Comparison and Swap
+// ============================================================
+
+// Compare and swap two values based on direction
+@comp_swap(a b dir) = ~dir !a !b {
+  #Asc:
+    !&0{a0 a1}=a
+    !&0{b0 b1}=b
+    ~(> a0 b0) !a1 !b1 {
+      0: #Cons{a1 #Cons{b1 #Nil}}  // a <= b, keep order
+      1: #Cons{b1 #Cons{a1 #Nil}}  // a > b, swap
+    }
+  #Desc:
+    !&0{a0 a1}=a
+    !&0{b0 b1}=b
+    ~(< a0 b0) !a1 !b1 {
+      0: #Cons{a1 #Cons{b1 #Nil}}  // a >= b, keep order
+      1: #Cons{b1 #Cons{a1 #Nil}}  // a < b, swap
+    }
+}
+
+// ============================================================
+// Bitonic Merge (Parallel)
+// ============================================================
+
+// Bitonic merge: merge a bitonic sequence into sorted order
+@bitonic_merge(xs dir) = ~xs !dir {
+  #Nil: #Nil
+  #Cons{h1 t1}: ~t1 !h1 !dir {
+    #Nil: #Cons{h1 #Nil}
+    #Cons{h2 t2}: ~t2 !h1 !h2 !dir {
+      #Nil:
+        // Two elements: compare and swap
+        @comp_swap(h1 h2 dir)
+      #Cons{h3 t3}:
+        // More elements: split, compare halves, recurse
+        !&0{d0 d1}=dir
+        !sorted = @comp_swap(h1 h2 d0)
+        ~sorted !d1 !h3 !t3 {
+          #Cons{s1 rest}: ~rest !s1 !d1 !h3 !t3 {
+            #Cons{s2 _}:
+              #Cons{s1 #Cons{s2 @bitonic_merge(#Cons{h3 t3} d1)}}
+            #Nil: #Cons{s1 @bitonic_merge(#Cons{h3 t3} d1)}
+          }
+          #Nil: @bitonic_merge(#Cons{h3 t3} d1)
+        }
+    }
+  }
+}
+
+// ============================================================
+// Bitonic Sort (Parallel)
+// ============================================================
+
+// Build bitonic sequence and sort
+@bitonic_sort(xs dir) = ~xs !dir {
+  #Nil: #Nil
+  #Cons{h1 t1}: ~t1 !h1 !dir {
+    #Nil: #Cons{h1 #Nil}
+    #Cons{h2 t2}: ~t2 !h1 !h2 !dir {
+      #Nil:
+        // Two elements
+        @comp_swap(h1 h2 dir)
+      #Cons{h3 t3}:
+        // Recursively sort halves in opposite directions, then merge
+        !&0{d0 d1}=dir
+        !first_half = @bitonic_sort(#Cons{h1 #Cons{h2 #Nil}} #Asc)
+        !second_half = @bitonic_sort(#Cons{h3 t3} #Desc)
+        @bitonic_merge(@merge_pairs(first_half second_half) d1)
+    }
+  }
+}
+
+// ============================================================
+// Simple Insertion Sort (for comparison)
+// ============================================================
+
+@insert(x xs) = ~xs !x {
+  #Nil: #Cons{x #Nil}
+  #Cons{head tail}:
+    !&0{x0 x1}=x
+    !&0{h0 h1}=head
+    ~(> x0 h0) !x1 !h1 !tail {
+      0: #Cons{x1 #Cons{h1 tail}}
+      1: #Cons{h1 @insert(x1 tail)}
+    }
+}
+
+@insertion_sort(xs) = ~xs {
+  #Nil: #Nil
+  #Cons{head tail}: @insert(head @insertion_sort(tail))
+}
+
+// ============================================================
+// Test Data Generation
+// ============================================================
+
+// Generate descending list (worst case for ascending sort)
+@gen_desc(!n acc) = ~n !acc {
+  0: acc
+  1+p: !&0{p0 p1}=p @gen_desc(p0 #Cons{p1 acc})
+}
+
+// Generate "random" list using LCG
+@gen_random(!n seed acc) = ~n !seed !acc {
+  0: acc
+  1+p:
+    !next = (% (+ (* seed 1103) 12345) 10000)
+    !&0{p0 p1}=p
+    !&0{n0 n1}=next
+    @gen_random(p0 n0 #Cons{(% n1 100) acc})
+}
+
+// ============================================================
+// Benchmarks
+// ============================================================
+
+// Small test: sort 8 descending numbers
+@test_small = @bitonic_sort(@gen_desc(8 #Nil) #Asc)
+
+// Medium test: sort 16 random numbers
+@test_medium = @bitonic_sort(@gen_random(16 42 #Nil) #Asc)
+
+// Insertion sort comparison
+@test_insertion = @insertion_sort(@gen_desc(16 #Nil))
+
+// Main: run bitonic sort test
+@main = @test_small

@@ -1,0 +1,93 @@
+// Parallel Sum Benchmark for HVM3
+// Demonstrates tree-based parallel reduction
+// Achieves O(log n) parallel time complexity
+
+// ============================================================
+// Data Types
+// ============================================================
+
+data List {
+  #Nil
+  #Cons{head tail}
+}
+
+data Tree {
+  #Leaf{val}
+  #Node{left right}
+}
+
+// ============================================================
+// List Operations
+// ============================================================
+
+// Generate a list of numbers from n down to 1
+@range(!n acc) = ~n !acc {
+  0: acc
+  1+p: !&0{p0 p1}=p @range(p0 #Cons{p1 acc})
+}
+
+// Sequential sum (O(n) time, no parallelism)
+@sum_seq(xs acc) = ~xs !acc {
+  #Nil: acc
+  #Cons{head tail}: @sum_seq(tail (+ acc head))
+}
+
+// ============================================================
+// Tree-based Parallel Sum
+// ============================================================
+
+// Build a balanced tree from a list (for parallel processing)
+@list_to_tree(xs) = ~xs {
+  #Nil: #Leaf{0}
+  #Cons{head tail}: ~tail !head {
+    #Nil: #Leaf{head}
+    #Cons{h2 t2}:
+      !&0{head0 head1}=head
+      #Node{#Leaf{head0} @list_to_tree(#Cons{h2 t2})}
+  }
+}
+
+// Parallel tree sum (O(log n) parallel time)
+@sum_tree(t) = ~t {
+  #Leaf{val}: val
+  #Node{left right}: (+ @sum_tree(left) @sum_tree(right))
+}
+
+// ============================================================
+// Optimized Range Sum using Tree Generation
+// ============================================================
+
+// Generate a balanced binary tree with values
+@gen_tree(!depth val) = ~depth !val {
+  0: #Leaf{val}
+  1+p:
+    !&0{v0 v1}=val
+    !&0{p0 p1}=p
+    #Node{@gen_tree(p0 v0) @gen_tree(p1 (+ v1 1))}
+}
+
+// Sum tree with parallel reduction
+@tree_sum(t) = ~t {
+  #Leaf{val}: val
+  #Node{left right}: (+ @tree_sum(left) @tree_sum(right))
+}
+
+// ============================================================
+// Benchmarks
+// ============================================================
+
+// Benchmark: Sum of 1 to 1000 (sequential)
+@bench_seq_1k = @sum_seq(@range(1000 #Nil) 0)
+
+// Benchmark: Sum using tree (parallel)
+// Generates tree of depth 10 = 1024 leaves
+@bench_tree_1k = @tree_sum(@gen_tree(10 1))
+
+// Benchmark: Large tree sum (depth 16 = 65536 values)
+@bench_tree_64k = @tree_sum(@gen_tree(16 1))
+
+// Benchmark: Very large tree sum (depth 20 = ~1M values)
+@bench_tree_1m = @tree_sum(@gen_tree(20 1))
+
+// Main benchmark
+@main = @bench_tree_64k

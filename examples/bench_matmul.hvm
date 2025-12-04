@@ -1,0 +1,124 @@
+// Matrix Multiplication Benchmark for HVM3
+// Demonstrates parallel matrix operations using tree-based representation
+
+// ============================================================
+// Data Types
+// ============================================================
+
+data Tree {
+  #Node{left right}
+  #Leaf{val}
+  #Nil
+}
+
+// ============================================================
+// Tree Operations (Parallel)
+// ============================================================
+
+@tree_sum(t) = ~t {
+  #Node{left right}: (+ @tree_sum(left) @tree_sum(right))
+  #Leaf{val}: val
+  #Nil: 0
+}
+
+@tree_mul(a b) = ~a !b {
+  #Node{left right}: ~b !left !right {
+    #Node{l2 r2}: #Node{@tree_mul(left l2) @tree_mul(right r2)}
+    #Leaf{v}: #Nil
+    #Nil: #Nil
+  }
+  #Leaf{val}: ~b !val {
+    #Leaf{v2}: #Leaf{(* val v2)}
+    #Node{l r}: #Nil
+    #Nil: #Nil
+  }
+  #Nil: #Nil
+}
+
+@tree_add(a b) = ~a !b {
+  #Node{left right}: ~b !left !right {
+    #Node{l2 r2}: #Node{@tree_add(left l2) @tree_add(right r2)}
+    #Leaf{v}: #Node{left right}
+    #Nil: #Node{left right}
+  }
+  #Leaf{val}: ~b !val {
+    #Leaf{v2}: #Leaf{(+ val v2)}
+    #Node{l r}: #Leaf{val}
+    #Nil: #Leaf{val}
+  }
+  #Nil: b
+}
+
+// ============================================================
+// Dot Product (Parallel)
+// ============================================================
+
+@dot_product(a b) = @tree_sum(@tree_mul(a b))
+
+// ============================================================
+// Matrix/Vector Generation
+// ============================================================
+
+// Generate a balanced tree of given depth with incrementing values
+@gen_tree(!depth val) = ~depth !val {
+  0: #Leaf{val}
+  1+p:
+    !&0{v0 v1}=val
+    !&0{p0 p1}=p
+    #Node{@gen_tree(p0 v0) @gen_tree(p1 (+ v1 1))}
+}
+
+// Generate a matrix as tree of trees
+@gen_matrix(!rows depth val) = ~rows !depth !val {
+  0: #Nil
+  1+p:
+    !&0{d0 d1}=depth
+    !&0{d2 d3}=d1
+    !&0{v0 v1}=val
+    !&0{p0 p1}=p
+    !row = @gen_tree(d0 v0)
+    !shift = d2
+    #Node{row @gen_matrix(p0 d3 (+ v1 shift))}
+}
+
+// ============================================================
+// Matrix-Vector Multiplication (Parallel)
+// ============================================================
+
+@matvec_row(row vec) = @dot_product(row vec)
+
+@matvec(mat vec) = ~mat !vec {
+  #Node{row rest}:
+    !&0{v0 v1}=vec
+    !result = @matvec_row(row v0)
+    #Node{#Leaf{result} @matvec(rest v1)}
+  #Leaf{val}: #Leaf{val}
+  #Nil: #Nil
+}
+
+// ============================================================
+// Benchmarks
+// ============================================================
+
+// Small vectors (depth 3 = 8 elements)
+@vec_small = @gen_tree(3 1)
+@mat_small = @gen_matrix(8 3 1)
+@bench_matvec_small = @tree_sum(@matvec(@mat_small @vec_small))
+
+// Medium vectors (depth 4 = 16 elements)
+@vec_medium = @gen_tree(4 1)
+@mat_medium = @gen_matrix(16 4 1)
+@bench_matvec_medium = @tree_sum(@matvec(@mat_medium @vec_medium))
+
+// Large vectors (depth 5 = 32 elements)
+@vec_large = @gen_tree(5 1)
+@mat_large = @gen_matrix(32 5 1)
+@bench_matvec_large = @tree_sum(@matvec(@mat_large @vec_large))
+
+// Dot product benchmarks
+@bench_dot_small = @dot_product(@gen_tree(8 1) @gen_tree(8 2))
+@bench_dot_medium = @dot_product(@gen_tree(10 1) @gen_tree(10 2))
+@bench_dot_large = @dot_product(@gen_tree(12 1) @gen_tree(12 2))
+
+// Main benchmark
+@main = @bench_matvec_small
