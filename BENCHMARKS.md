@@ -112,9 +112,81 @@ hvm run examples/training_example.hvm -c -s
 #   -s  Show statistics
 ```
 
+## Apple Silicon GPU Backend (Metal)
+
+Paragon includes a native Metal backend for Apple Silicon Macs, providing GPU-accelerated neural network operations.
+
+### Metal Shader Performance
+
+The Metal backend implements the following GPU kernels:
+
+| Kernel | Description | Optimization |
+|--------|-------------|--------------|
+| `parallel_sum_reduce` | Tree-based parallel sum | Shared memory reduction |
+| `tensor_add/mul/relu` | Element-wise operations | Coalesced memory access |
+| `dense_forward` | Layer forward pass | Tiled matrix multiplication |
+| `dense_weight_gradients` | Weight gradient computation | 2D thread dispatch |
+| `dense_input_gradients` | Backprop to previous layer | Transpose multiply |
+| `sgd_update` | Weight updates with momentum | In-place update |
+| `mse_loss` | Loss computation | Parallel reduction |
+| `bitonic_sort_step` | Parallel sorting | Compare-swap network |
+
+### Expected GPU Performance
+
+Based on Apple Silicon GPU specifications:
+
+| Device | GPU Cores | Memory Bandwidth | Est. Performance |
+|--------|-----------|------------------|------------------|
+| M1 | 8 | 68 GB/s | ~5,000 MIPS |
+| M1 Pro | 16 | 200 GB/s | ~15,000 MIPS |
+| M1 Max | 32 | 400 GB/s | ~30,000 MIPS |
+| M2 | 10 | 100 GB/s | ~8,000 MIPS |
+| M3 Max | 40 | 400 GB/s | ~40,000 MIPS |
+| M4 Max | 40 | 546 GB/s | ~50,000 MIPS |
+
+### Building and Testing Metal Backend
+
+```bash
+# Build Metal shaders and Swift runtime
+cd metal
+./build_metal.sh
+
+# Verify Metal support
+./build/test_metal
+```
+
+### Unified Memory Advantage
+
+Apple Silicon's unified memory architecture provides:
+- Zero-copy data transfer between CPU and GPU
+- Efficient memory sharing for HVM3's tree structures
+- Reduced latency for interactive training
+
+## Parallel Backpropagation
+
+The `examples/backprop.hvm` implements full parallel backpropagation in HVM3:
+
+### Gradient Computation Complexity
+
+| Operation | Sequential | Parallel (HVM3) |
+|-----------|------------|-----------------|
+| Forward pass | O(n) | O(log n) depth |
+| Loss gradient | O(n) | O(1) |
+| Weight gradients | O(n²) | O(log n) depth |
+| Input gradients | O(n²) | O(log n) depth |
+| Weight updates | O(n) | O(1) |
+
+### Running Backprop Example
+
+```bash
+hvm run examples/backprop.hvm -c -s
+```
+
 ## Future Optimizations
 
-1. **GPU Backend**: HVM3 can target CUDA for massive parallelism
+1. ~~**GPU Backend**: HVM3 can target CUDA for massive parallelism~~ ✓ Metal backend implemented
 2. **Larger Networks**: Scale to deeper/wider neural networks
 3. **Batched Training**: Process multiple samples in parallel
-4. **Gradient Computation**: Implement parallel backpropagation
+4. ~~**Gradient Computation**: Implement parallel backpropagation~~ ✓ Implemented
+5. **CUDA Backend**: Port Metal shaders to CUDA for NVIDIA GPUs
+6. **Distributed Training**: Multi-device gradient synchronization

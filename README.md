@@ -14,6 +14,8 @@ HVM3 is an efficient implementation of the Interaction Calculus (IC), a computat
 - **Decentralized Architecture**: Training models across a distributed network of machines, enhancing robustness and fault tolerance.
 - **Massively Parallel Execution**: Utilizing HVM3's interaction calculus to achieve near-linear speedup with core count.
 - **Linear Types**: Resource-aware computation enabling efficient memory management and garbage collection.
+- **Apple Silicon GPU Backend**: Native Metal shaders optimized for M1/M2/M3/M4 unified memory architecture.
+- **Parallel Backpropagation**: Tree-based gradient computation with O(log n) parallel depth.
 
 ## Why HVM3?
 
@@ -87,8 +89,19 @@ paragon/
 │   └── network.bend            # Network composition
 ├── examples/                   # Example applications
 │   ├── training_example.hvm    # XOR training (HVM3 native)
-│   └── training_example.bend   # XOR training (Bend)
+│   ├── training_example.bend   # XOR training (Bend)
+│   ├── backprop.hvm            # Parallel backpropagation
+│   ├── bench_fibonacci.hvm     # Fibonacci benchmark
+│   ├── bench_parallel_sum.hvm  # Tree reduction benchmark
+│   ├── bench_bitonic_sort.hvm  # Parallel sorting
+│   ├── bench_matmul.hvm        # Matrix multiplication
+│   └── bench_neural_layer.hvm  # Neural layer benchmark
+├── metal/                      # Apple Silicon GPU backend
+│   ├── shaders.metal           # Metal compute shaders
+│   ├── ParagonMetal.swift      # Swift runtime wrapper
+│   └── build_metal.sh          # Metal build script
 ├── build.sh                    # Build script for C/CUDA
+├── BENCHMARKS.md               # Performance benchmarks
 └── README.md
 ```
 
@@ -101,6 +114,53 @@ If you want to build the project from source, use the provided build script:
 ```
 
 This will compile the low-level IR language to C and CUDA, and generate the necessary binaries for running on GPU hardware.
+
+### Apple Silicon GPU Backend
+
+For Apple Silicon Macs (M1/M2/M3/M4), Paragon includes a native Metal backend for GPU-accelerated training:
+
+```bash
+# Build Metal shaders and Swift runtime
+cd metal
+./build_metal.sh
+
+# Run Metal test
+./build/test_metal
+```
+
+The Metal backend provides:
+- **Parallel tensor operations** - Element-wise add, multiply, ReLU
+- **Matrix-vector multiplication** - Optimized for neural network layers
+- **Parallel backpropagation** - Gradient computation with shared memory
+- **SGD with momentum** - Weight updates on GPU
+
+#### Using the Metal Runtime (Swift)
+
+```swift
+import ParagonMetal
+
+// Initialize Metal runtime
+let metal = try ParagonMetal()
+
+// Create network: 2 -> 8 -> 1
+let network = NeuralNetwork(layerSizes: [2, 8, 1], metal: metal)
+
+// Train on XOR dataset
+try network.train(inputs: xorInputs, targets: xorTargets, epochs: 1000)
+```
+
+### Parallel Backpropagation
+
+The `examples/backprop.hvm` demonstrates parallel gradient computation in pure HVM3:
+
+```bash
+hvm run examples/backprop.hvm -c -s
+```
+
+Key features:
+- **Tree-based gradient accumulation** - O(log n) parallel depth
+- **Forward pass caching** - Stores activations for backward pass
+- **Parallel weight updates** - SGD with momentum
 
 ## Documentation
 

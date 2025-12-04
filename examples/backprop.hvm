@@ -1,0 +1,346 @@
+// Parallel Backpropagation for HVM3
+// Implements gradient computation with tree-based parallel reduction
+// Uses scaled integers (x1000) for numerical precision
+
+// ============================================================
+// Data Type Definitions
+// ============================================================
+
+data Tensor {
+  #TNode{left right}
+  #TLeaf{val}
+  #TNil
+}
+
+data Layer {
+  #Dense{weights biases}
+}
+
+data Sample {
+  #Data{input target}
+}
+
+data SampleList {
+  #SNil
+  #SCons{head tail}
+}
+
+data Result {
+  #Res{layer loss}
+}
+
+// ============================================================
+// Tensor Operations (Parallel)
+// ============================================================
+
+// Parallel sum reduction
+@tensor_sum(t) = ~t {
+  #TNode{left right}: (+ @tensor_sum(left) @tensor_sum(right))
+  #TLeaf{val}: val
+  #TNil: 0
+}
+
+// Element-wise addition
+@tensor_add(a b) = ~a !b {
+  #TNode{left right}: ~b !left !right {
+    #TNode{l2 r2}: #TNode{@tensor_add(left l2) @tensor_add(right r2)}
+    #TLeaf{v}: #TNode{left right}
+    #TNil: #TNode{left right}
+  }
+  #TLeaf{val}: ~b !val {
+    #TLeaf{v2}: #TLeaf{(+ val v2)}
+    #TNode{l r}: #TLeaf{val}
+    #TNil: #TLeaf{val}
+  }
+  #TNil: b
+}
+
+// Element-wise subtraction
+@tensor_sub(a b) = ~a !b {
+  #TNode{left right}: ~b !left !right {
+    #TNode{l2 r2}: #TNode{@tensor_sub(left l2) @tensor_sub(right r2)}
+    #TLeaf{v}: #TNode{left right}
+    #TNil: #TNode{left right}
+  }
+  #TLeaf{val}: ~b !val {
+    #TLeaf{v2}: #TLeaf{(- val v2)}
+    #TNode{l r}: #TLeaf{val}
+    #TNil: #TLeaf{val}
+  }
+  #TNil: #TNil
+}
+
+// Element-wise multiplication (scaled)
+@tensor_mul(a b) = ~a !b {
+  #TNode{left right}: ~b !left !right {
+    #TNode{l2 r2}: #TNode{@tensor_mul(left l2) @tensor_mul(right r2)}
+    #TLeaf{v}: #TNil
+    #TNil: #TNil
+  }
+  #TLeaf{val}: ~b !val {
+    #TLeaf{v2}: #TLeaf{(/ (* val v2) 1000)}
+    #TNode{l r}: #TNil
+    #TNil: #TNil
+  }
+  #TNil: #TNil
+}
+
+// Scalar multiplication
+@tensor_scale(t s) = ~t !s {
+  #TNode{left right}:
+    !&0{s0 s1}=s
+    #TNode{@tensor_scale(left s0) @tensor_scale(right s1)}
+  #TLeaf{val}: #TLeaf{(/ (* val s) 1000)}
+  #TNil: #TNil
+}
+
+// ============================================================
+// Activation Functions
+// ============================================================
+
+@relu(x) = !&0{x0 x1}=x ~(> x0 0) !x1 {
+  0: 0
+  1: x1
+}
+
+@tensor_relu(t) = ~t {
+  #TNode{left right}: #TNode{@tensor_relu(left) @tensor_relu(right)}
+  #TLeaf{val}: #TLeaf{@relu(val)}
+  #TNil: #TNil
+}
+
+// ReLU derivative
+@relu_deriv(x) = ~(> x 0) {
+  0: 0
+  1: 1000
+}
+
+@tensor_relu_deriv(t) = ~t {
+  #TNode{left right}: #TNode{@tensor_relu_deriv(left) @tensor_relu_deriv(right)}
+  #TLeaf{val}: #TLeaf{@relu_deriv(val)}
+  #TNil: #TNil
+}
+
+// ============================================================
+// Matrix Operations
+// ============================================================
+
+@matvec(mat vec) = ~mat !vec {
+  #TNode{row rest}:
+    !&0{v0 v1}=vec
+    !dot = @tensor_sum(@tensor_mul(row v0))
+    #TNode{#TLeaf{dot} @matvec(rest v1)}
+  #TLeaf{val}: #TLeaf{val}
+  #TNil: #TNil
+}
+
+// ============================================================
+// Layer Forward Pass
+// ============================================================
+
+@layer_forward(layer input) = ~layer !input {
+  #Dense{weights biases}:
+    !weighted = @matvec(weights input)
+    !with_bias = @tensor_add(weighted biases)
+    @tensor_relu(with_bias)
+}
+
+// ============================================================
+// Loss and Gradient
+// ============================================================
+
+@mse_loss(pred target) =
+  !diff = @tensor_sub(pred target)
+  !&0{d0 d1}=diff
+  !squared = @tensor_mul(d0 d1)
+  @tensor_sum(squared)
+
+@mse_grad(pred target) =
+  !diff = @tensor_sub(pred target)
+  @tensor_scale(diff 2000)
+
+// ============================================================
+// Gradient Computation (Parallel)
+// ============================================================
+
+// Outer product for weight gradients
+@outer_product(delta input) = ~delta !input {
+  #TNode{left right}:
+    !&0{i0 i1}=input
+    #TNode{@outer_product(left i0) @outer_product(right i1)}
+  #TLeaf{d}: @tensor_scale(input d)
+  #TNil: #TNil
+}
+
+// Apply ReLU gradient
+@apply_relu_grad(upstream pre_act) =
+  !relu_grad = @tensor_relu_deriv(pre_act)
+  @tensor_mul(upstream relu_grad)
+
+// ============================================================
+// Weight Update
+// ============================================================
+
+@update_tensor(weights grads lr) = ~weights !grads !lr {
+  #TNode{wl wr}: ~grads !wl !wr !lr {
+    #TNode{gl gr}:
+      !&0{lr0 lr1}=lr
+      #TNode{@update_tensor(wl gl lr0) @update_tensor(wr gr lr1)}
+    #TLeaf{g}: #TNode{wl wr}
+    #TNil: #TNode{wl wr}
+  }
+  #TLeaf{w}: ~grads !w !lr {
+    #TLeaf{g}:
+      !update = (/ (* g lr) 1000)
+      #TLeaf{(- w update)}
+    #TNode{l r}: #TLeaf{w}
+    #TNil: #TLeaf{w}
+  }
+  #TNil: grads
+}
+
+// ============================================================
+// Single Training Step with Backprop
+// ============================================================
+
+@backprop_step(weights biases input target lr) =
+  // Forward pass
+  !&0{w0 w1}=weights
+  !&0{i0 i1}=input
+  !&0{i2 i3}=i1
+  !&0{t0 t1}=target
+  !&0{lr0 lr1}=lr
+  !&0{lr2 lr3}=lr1
+
+  !weighted = @matvec(w0 i0)
+  !&0{b0 b1}=biases
+  !pre_act = @tensor_add(weighted b0)
+  !&0{p0 p1}=pre_act
+  !output = @tensor_relu(p0)
+  !&0{o0 o1}=output
+
+  // Compute loss
+  !loss = @mse_loss(o0 t0)
+
+  // Backprop
+  !loss_grad = @mse_grad(o1 t1)
+  !delta = @apply_relu_grad(loss_grad p1)
+  !&0{d0 d1}=delta
+
+  // Weight gradients (parallel outer product)
+  !weight_grad = @outer_product(d0 i2)
+
+  // Bias gradient
+  !bias_grad = d1
+
+  // Update weights
+  !new_weights = @update_tensor(w1 weight_grad lr0)
+  !new_biases = @update_tensor(b1 bias_grad lr2)
+
+  #Res{#Dense{new_weights new_biases} loss}
+
+// ============================================================
+// Training on Dataset
+// ============================================================
+
+@train_on_samples(layer samples lr) = ~samples !layer !lr {
+  #SNil: #Res{layer 0}
+  #SCons{sample rest}:
+    !&0{lr0 lr1}=lr
+    ~sample !layer !rest !lr0 !lr1 {
+      #Data{input target}:
+        ~layer !input !target !rest !lr0 !lr1 {
+          #Dense{weights biases}:
+            !result = @backprop_step(weights biases input target lr0)
+            ~result !rest !lr1 {
+              #Res{new_layer loss}:
+                !rest_result = @train_on_samples(new_layer rest lr1)
+                ~rest_result !loss {
+                  #Res{final_layer rest_loss}:
+                    #Res{final_layer (+ loss rest_loss)}
+                }
+            }
+        }
+    }
+}
+
+// Multiple epochs
+@train_epochs(!n layer samples lr) = ~n !layer !samples !lr {
+  0: layer
+  1+p:
+    !&0{s0 s1}=samples
+    !&0{lr0 lr1}=lr
+    !result = @train_on_samples(layer s0 lr0)
+    ~result !p !s1 !lr1 {
+      #Res{new_layer loss}: @train_epochs(p new_layer s1 lr1)
+    }
+}
+
+// ============================================================
+// Initialization
+// ============================================================
+
+@gen_weights(!depth seed) = ~depth !seed {
+  0: #TLeaf{(% (+ (* seed 1103) 12345) 200)}
+  1+p:
+    !&0{s0 s1}=seed
+    !&0{p0 p1}=p
+    !next = (% (+ (* s0 1103) 12345) 10000)
+    !&0{n0 n1}=next
+    #TNode{@gen_weights(p0 n0) @gen_weights(p1 (+ n1 1))}
+}
+
+@gen_biases(!depth) = ~depth {
+  0: #TLeaf{0}
+  1+p: !&0{p0 p1}=p #TNode{@gen_biases(p0) @gen_biases(p1)}
+}
+
+@create_layer(depth seed) =
+  !&0{d0 d1}=depth
+  #Dense{@gen_weights(d0 seed) @gen_biases(d1)}
+
+// ============================================================
+// XOR Dataset
+// ============================================================
+
+@xor1 = #Data{#TNode{#TLeaf{0} #TLeaf{0}} #TLeaf{0}}
+@xor2 = #Data{#TNode{#TLeaf{0} #TLeaf{1000}} #TLeaf{1000}}
+@xor3 = #Data{#TNode{#TLeaf{1000} #TLeaf{0}} #TLeaf{1000}}
+@xor4 = #Data{#TNode{#TLeaf{1000} #TLeaf{1000}} #TLeaf{0}}
+
+@xor_data = #SCons{@xor1 #SCons{@xor2 #SCons{@xor3 #SCons{@xor4 #SNil}}}}
+
+// ============================================================
+// Evaluation
+// ============================================================
+
+@eval_sample(layer sample) = ~sample !layer {
+  #Data{input target}:
+    !output = @layer_forward(layer input)
+    @mse_loss(output target)
+}
+
+@eval_all(layer samples) = ~samples !layer {
+  #SNil: 0
+  #SCons{sample rest}:
+    !&0{l0 l1}=layer
+    !loss = @eval_sample(l0 sample)
+    (+ loss @eval_all(l1 rest))
+}
+
+// ============================================================
+// Main
+// ============================================================
+
+@main =
+  !layer = @create_layer(1 42)
+  !data = @xor_data
+  !lr = 100
+  !epochs = 3
+
+  // Train with backprop
+  !trained = @train_epochs(epochs layer data lr)
+
+  // Final evaluation
+  !&0{d0 d1}=@xor_data
+  @eval_all(trained d0)
